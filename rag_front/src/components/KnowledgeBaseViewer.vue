@@ -418,8 +418,10 @@ onMounted(() => {
   height: 100vh; /* 调整整体高度 */
   display: flex;
   flex-direction: column;
-  padding: 10px;
+  padding: 10px 30px; /* 增加左右边距，使内容向右移动 */
   box-sizing: border-box;
+  width: calc(100vw + 40px); /* 增加整体宽度 */
+  margin-left: 20px; /* 向右移动 */
 }
 
 .viewer-header {

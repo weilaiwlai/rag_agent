@@ -306,7 +306,48 @@ class KnowledgeBaseViewer:
             import traceback
             traceback.print_exc()
             return []
-
+    def delete_documents_by_source(self, collection_name: str, source: str) -> bool:
+        """
+        根据source字段删除文档的所有片段
+        
+        Args:
+            collection_name: 集合名称
+            source: 源标识符
+            
+        Returns:
+            删除是否成功
+        """
+        try:
+            # 检查集合是否存在
+            if not utility.has_collection(collection_name):
+                logger.warning(f"集合 '{collection_name}' 不存在")
+                return False
+            
+            # 获取集合引用并加载
+            collection = Collection(collection_name)
+            collection.load()  # 加载集合到内存以进行操作
+            
+            expr = f"source == '{source}'"
+            
+            # 添加调试日志
+            logger.info(f"准备执行删除操作，表达式: {expr}")
+            logger.info(f"原始source值: {source}")
+            
+            # 执行删除操作
+            delete_result = collection.delete(expr)
+            
+            logger.info(f"成功删除集合 '{collection_name}' 中 source 为 '{source}' 的文档片段")
+            logger.info(f"删除的实体数量: {delete_result.delete_count}")
+            
+            # 刷新集合以确保删除生效
+            collection.flush()
+            
+            return True
+        except Exception as e:
+            logger.error(f"按source删除文档失败: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
 
 def main():
     """测试函数"""

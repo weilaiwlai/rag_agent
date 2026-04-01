@@ -543,7 +543,37 @@ def delete_document_by_id(collection_name, doc_id):
             'message': f'删除文档失败: {str(e)}'
         }), 500
 
-
+@vector_bp.route('/collections/<collection_name>/documents-by-source/<path:source_value>', methods=['DELETE'])
+def delete_documents_by_source(collection_name, source_value):
+    """根据source删除文档的所有片段"""
+    global knowledge_base_viewer
+    
+    if not knowledge_base_viewer:
+        return jsonify({
+            'success': False,
+            'message': '知识库查看器未初始化'
+        }), 400
+    
+    try:
+        # 直接使用提供的source值进行删除
+        success = knowledge_base_viewer.delete_documents_by_source(collection_name, source_value)
+        
+        if success:
+            return jsonify({
+                'success': True,
+                'message': f'源为 "{source_value}" 的所有文档片段已从集合 {collection_name} 中删除'
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'message': f'删除源为 "{source_value}" 的文档片段失败'
+            }), 400
+    except Exception as e:
+        logger.error(f"按source删除文档API错误: {str(e)}")
+        return jsonify({
+            'success': False,
+            'message': f'按source删除文档失败: {str(e)}'
+        }), 500
 # 错误处理
 @vector_bp.errorhandler(404)
 def not_found(error):

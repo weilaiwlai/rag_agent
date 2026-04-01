@@ -19,7 +19,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 from utils.config_handler import rag_conf
 from utils.prompt_loader import load_rag_prompts, load_hyde_prompts
-from model.factory import chat_model, rerank_model
+from model.factory import chat_model, get_rerank_model
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import PromptTemplate
 
@@ -128,7 +128,9 @@ class VectorRetriever:
                         question: str, 
                         collection_name: str, 
                         k: int = 5,
-                        cerank: bool = True) -> AnswerResult:
+                        use_multi_query: bool = False,
+                        use_hyde: bool = True,
+                        use_cross_encoder_rerank: bool = True) -> AnswerResult:
         """
         回答问题 
         Args:
@@ -142,22 +144,27 @@ class VectorRetriever:
             question_type = QuestionClassifier.classify_question(question)
 
             all_queries = [question]
-            hypo_docs = self.generate_hypothetical_document(question, num_docs=2)
-            all_queries.extend(hypo_docs)
+            if use_multi_query:
+                generated_queries = self.generate_multi_queries(question, num_queries=rag_conf["multi_query_nums"])
+                all_queries.extend(generated_queries)
+                logger.info(f"多查询模式开启，生成了 {len(generated_queries)} 个新查询: {generated_queries}")
+            elif use_hyde:
+                hyde_docs = self.generate_hypothetical_document(question, num_docs=rag_conf["hyde_docs_nums"])
+                all_queries.extend(hyde_docs)
+                logger.info(f"HyDE模式开启，生成了 {len(hyde_docs)} 个假设文档作为查询")
+                all_queries.extend(hyde_docs)
             
-            search_results_dict = {}
-            
+            search_results_dict = {}     
             for query in all_queries:
                 query_results = self.search_similar_content(
                     query=query,
                     collection_name=collection_name,
                     k=k  
                 )
-                
                 search_results_dict[query] = query_results
 
-            if cerank:
-                contents, scores = self.cross_encoder_rerank(question, search_results_dict)
+            if use_cross_encoder_rerank:
+                contents, scores = self.cross_encoder_rerank(question, search_results_dict, top_n=k)
                 source_documents = []
                 context_parts = []
                 for content_dict, score in zip(contents, scores):
@@ -169,7 +176,7 @@ class VectorRetriever:
                 context = "\n\n".join(context_parts)
                 normalized_scores = scores
             else:
-                rrf_results = self.reciprocal_rank_fusion(search_results_dict, num_docs=k)
+                rrf_results = self.reciprocal_rank_fusion(search_results_dict, top_n=k)
             
                 context_parts = []
                 source_documents = []
@@ -224,6 +231,26 @@ class VectorRetriever:
             logger.error(f"LLM 生成失败: {e}")
             return "抱歉，生成回答时出现错误，请稍后再试。"
         
+    def generate_multi_queries(self, original_query: str, num_queries: int = 3) -> List[str]:
+        """使用大模型生成多个语义相似但表达不同的查询语句"""
+        prompt_template = f"""
+        你是一个查询扩展专家。请针对用户的问题，生成 {num_queries} 个语义相同但表达方式不同的查询。
+        这些查询应该从不同的角度或使用不同的词汇来表达相同的意图，以帮助检索系统找到最相关的信息。
+        请只输出查询语句，每行一个，不要包含任何序号或额外解释。
+
+        用户问题: {original_query}
+
+        请生成 {num_queries} 个变体查询:
+        """
+        try:
+            response = self.chat_model.invoke(prompt_template, temperature=0.7) 
+            raw_text = response.content.strip()
+            queries = [q.strip() for q in raw_text.split('\n') if q.strip()]
+            return queries[:num_queries] 
+        except Exception as e:
+            logger.warning(f"生成多查询失败，回退到原始查询: {e}")
+            return [original_query]
+        
     def generate_hypothetical_document(self, query: str, num_docs=3) -> List[str]:
         """生成多个假设性文档"""
         prompt_template = PromptTemplate.from_template(load_hyde_prompts())
@@ -233,7 +260,7 @@ class VectorRetriever:
             hypothetical_docs.append(response.content)
         return hypothetical_docs
     
-    def reciprocal_rank_fusion(self, search_results_dict, num_docs: int=5,  k=60):
+    def reciprocal_rank_fusion(self, search_results_dict, top_n: int=5,  k=60):
         """使用倒数排序融合算法合并多个搜索结果"""
         fused_scores = {}
         doc_map = {}  # 映射哈希值到(doc, score)元组
@@ -253,7 +280,7 @@ class VectorRetriever:
             reverse=True
         )
  
-        return [(doc_map[doc_hash][0], doc_map[doc_hash][1]) for doc_hash, score in reranked_results[:num_docs]]
+        return [(doc_map[doc_hash][0], doc_map[doc_hash][1]) for doc_hash, score in reranked_results[:top_n]]
     
     def cross_encoder_rerank(self, query: str, search_results_dict, top_n: int = 5):
         """使用交叉编码器重排序"""
@@ -269,7 +296,7 @@ class VectorRetriever:
                     all_docs_list.append(doc)
                     seen_content.add(content_hash)
         
-        rerankmodel = rerank_model
+        rerankmodel = get_rerank_model(top_n)
         reranked_results = rerankmodel.compress_documents(documents=all_docs_list, query=query)
             
         contents = []

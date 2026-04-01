@@ -34,14 +34,15 @@ class EmbeddingsFactory(BaseModelFactory):
                                    dashscope_api_key=rag_conf["dashscope_api_key"])
     
 class RerankFactory(BaseModelFactory):
-    def generator(self) -> Optional[Embeddings | BaseChatModel]:
+    def generator(self, top_n: int = 5) -> Optional[Embeddings | BaseChatModel]:
         return DashScopeRerank(
             model=rag_conf["rerank_model_name"],
-            top_n=rag_conf["rerank_top_n"],
+            top_n=top_n,
             dashscope_api_key=rag_conf["dashscope_api_key"], 
         )
 
 
 chat_model = ChatModelFactory().generator()
 embed_model = EmbeddingsFactory().generator()
-rerank_model = RerankFactory().generator()
+def get_rerank_model(top_n: int = 5) -> Optional[Embeddings | BaseChatModel]:
+    return RerankFactory().generator(top_n)

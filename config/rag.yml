@@ -23,3 +23,6 @@ separators: ["\n\n", "\n", ".", "!", "?", "。", "！", "？", " ", ""]
 
 rerank_model_name: qwen3-rerank
 rerank_top_n: 5
+
+multi_query_nums: 3
+hyde_docs_nums: 2

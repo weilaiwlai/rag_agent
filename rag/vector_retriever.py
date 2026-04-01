@@ -18,7 +18,7 @@ from vector_db_manager import VectorDatabaseManager
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 from utils.config_handler import rag_conf
-from utils.prompt_loader import load_rag_prompts, load_hyde_prompts
+from utils.prompt_loader import load_rag_prompts, load_hyde_prompts, load_multi_query_prompt
 from model.factory import chat_model, get_rerank_model
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import PromptTemplate
@@ -128,8 +128,8 @@ class VectorRetriever:
                         question: str, 
                         collection_name: str, 
                         k: int = 5,
-                        use_multi_query: bool = False,
-                        use_hyde: bool = True,
+                        use_multi_query: bool = True,
+                        use_hyde: bool = False,
                         use_cross_encoder_rerank: bool = True) -> AnswerResult:
         """
         回答问题 
@@ -233,17 +233,9 @@ class VectorRetriever:
         
     def generate_multi_queries(self, original_query: str, num_queries: int = 3) -> List[str]:
         """使用大模型生成多个语义相似但表达不同的查询语句"""
-        prompt_template = f"""
-        你是一个查询扩展专家。请针对用户的问题，生成 {num_queries} 个语义相同但表达方式不同的查询。
-        这些查询应该从不同的角度或使用不同的词汇来表达相同的意图，以帮助检索系统找到最相关的信息。
-        请只输出查询语句，每行一个，不要包含任何序号或额外解释。
-
-        用户问题: {original_query}
-
-        请生成 {num_queries} 个变体查询:
-        """
+        prompt_template = PromptTemplate.from_template(load_multi_query_prompt())
         try:
-            response = self.chat_model.invoke(prompt_template, temperature=0.7) 
+            response = self.chat_model.invoke(prompt_template.format(original_query=original_query, num_queries=num_queries), temperature=0.7) 
             raw_text = response.content.strip()
             queries = [q.strip() for q in raw_text.split('\n') if q.strip()]
             return queries[:num_queries] 

@@ -18,7 +18,10 @@ from vector_db_manager import VectorDatabaseManager
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 from utils.config_handler import rag_conf
+from utils.prompt_loader import load_rag_prompts, load_hyde_prompts
 from model.factory import chat_model
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.prompts import PromptTemplate
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -46,10 +49,15 @@ class RetrievalResult:
 class AnswerResult:
     """问答结果数据类"""
     answer: str
-    confidence: float
     question_type: str
     source_documents: List[Document]
     scores: List[float]
+
+def print_prompt(prompt):
+    print("="*20)
+    #print(prompt.to_string())
+    print("="*20)
+    return prompt
 
 
 class VectorRetriever:
@@ -71,6 +79,13 @@ class VectorRetriever:
         self.similarity_threshold = similarity_threshold
         self.max_results = max_results
         self.chat_model_name = rag_conf["chat_model_name"]
+        self.prompt_template = PromptTemplate.from_template(load_rag_prompts())
+        self.chat_model = chat_model
+        self.chain = self._init_chain()
+
+    def _init_chain(self):
+        chain = self.prompt_template | print_prompt | self.chat_model | StrOutputParser()
+        return chain
     
     def search_similar_content(self,
                              query: str,
@@ -95,16 +110,14 @@ class VectorRetriever:
             k = self.max_results
         
         try:
-            # 执行向量搜索
             search_results = self.db_manager.search(query=query, k=k, collection_name=collection_name)
-            
-            # 过滤低相似度结果
+
             results = []
             for doc, score in search_results:
                 if score >= self.similarity_threshold:
                     results.append((doc, score))
             
-            logger.info(f"在集合 '{collection_name}' 中检索查询: '{query}', 返回 {len(results)} 个高质量结果")
+            logger.info(f"在集合 '{collection_name}' 中检索查询, 返回 {len(results)} 个高质量结果")
             return results
             
         except Exception as e:
@@ -127,48 +140,62 @@ class VectorRetriever:
             回答结果
         """
         try:
-            # 1. 分类问题
             question_type = QuestionClassifier.classify_question(question)
+
+            all_queries = [question]
+            hypo_docs = self.generate_hypothetical_document(question, num_docs=2)
+            all_queries.extend(hypo_docs)
             
-            # 2. 检索相关文档
-            relevant_docs_with_scores = self.search_similar_content(
-                query=question,
-                collection_name=collection_name,
-                k=k
-            )
+            search_results_dict = {}
+            all_docs_map = {}  
             
-            # 3. 构建上下文 (即使为空也构建空上下文)
+            for query in all_queries:
+                query_results = self.search_similar_content(
+                    query=query,
+                    collection_name=collection_name,
+                    k=k  
+                )
+
+                doc_score_pairs = []
+                for doc, score in query_results:
+                    doc_id = hash(doc.page_content)
+                    doc_score_pairs.append((doc_id, score))
+                    all_docs_map[doc_id] = (doc, score)
+                
+                search_results_dict[query] = doc_score_pairs
+            
+            rrf_results = self.reciprocal_rank_fusion(search_results_dict, num_docs=k)
+            
+            relevant_docs_with_scores = []
             context_parts = []
             source_documents = []
             scores = []
             
-            if relevant_docs_with_scores:
-                for i, (doc, score) in enumerate(relevant_docs_with_scores):
-                    context_parts.append(f"参考资料{i+1}: {doc.page_content}")
+            for doc_id, rrf_score in rrf_results:  
+                if doc_id in all_docs_map:
+                    doc, original_score = all_docs_map[doc_id]
+                    relevant_docs_with_scores.append((doc, original_score))
+                    context_parts.append(f"参考资料{len(context_parts)+1}: {doc.page_content}")
                     source_documents.append(doc)
-                    scores.append(score)
+                    scores.append(original_score)
             
             context = "\n\n".join(context_parts)
             
-            # 4. 生成回答 (使用 LLM)
             answer = self._generate_answer_with_llm(question, context)
             
-            # 5. 计算置信度
-            confidence = self._calculate_confidence(scores)
+            normalized_scores = self._calculate_score(scores)
             
             return AnswerResult(
                 answer=answer,
-                confidence=confidence,
                 question_type=question_type,
                 source_documents=source_documents,
-                scores=scores
+                scores=normalized_scores
             )
             
         except Exception as e:
             logger.error(f"回答问题失败: {e}")
             return AnswerResult(
                 answer=f"处理问题时出现错误: {str(e)}",
-                confidence=0.0,
                 question_type="错误",
                 source_documents=[],
                 scores=[]
@@ -176,62 +203,66 @@ class VectorRetriever:
     
     def _generate_answer_with_llm(self, question: str, context: str) -> str:
         """使用 LLM 生成回答"""
-        try:                       
-            client = chat_model
-            
-            system_prompt = (
-                "你是一个智能助手。请基于提供的【参考资料】回答用户的问题。\n"
-                "如果参考资料为空或与问题无关，请忽略参考资料，利用你的通用知识进行回答，"
-                "并在回答开头说明：'知识库中未找到相关内容，以下是基于通用知识的回答：'。\n"
-                "回答要简洁、准确、有条理。"
-            )
-            
-            user_prompt = f"问题：{question}\n\n"
+        try:                                              
+            rag_prompt = ""
             if context:
-                user_prompt += f"【参考资料】：\n{context}"
+                rag_prompt += f"【参考资料】：\n{context}"
             else:
-                user_prompt += "【参考资料】：(无)"               
+                rag_prompt += "【参考资料】：(无)"  
+
+            response = self.chain.invoke(
+                {
+                    "input": question,
+                    "context": rag_prompt,
+                }
+            )          
             
-            messages = [
-                SystemMessage(content=system_prompt),
-                HumanMessage(content=user_prompt)
-            ]
-            
-            response = client.invoke(messages)
-            
-            return response.content
+            return response
             
         except Exception as e:
             logger.error(f"LLM 生成失败: {e}")
             return "抱歉，生成回答时出现错误，请稍后再试。"
+        
+    def generate_hypothetical_document(self, query: str, num_docs=3) -> List[str]:
+        """生成多个假设性文档"""
+        prompt_template = PromptTemplate.from_template(load_hyde_prompts())
+        hypothetical_docs = []
+        for _ in range(num_docs):
+            response = self.chat_model.invoke(prompt_template.format(query=query), temperature=0.8)
+            hypothetical_docs.append(response.content)
+        return hypothetical_docs
     
-    def _calculate_confidence(self, scores: List[float]) -> float:
-        """
-        计算回答置信度
-        
-        Args:
-            scores: 相似度分数列表
-            
-        Returns:
-            置信度分数 (0-1)
-        """
-        if not scores:
-            return 0.0
-        
-        # 基于最高相似度分数和结果数量计算置信度
-        max_score = max(scores)
-        avg_score = sum(scores) / len(scores)
-        
-        # 结果数量权重
-        count_weight = min(len(scores) / 5.0, 1.0)
-        
-        # 综合置信度
-        confidence = (max_score * 0.6 + avg_score * 0.4) * count_weight
-        
-        return min(confidence, 1.0)
+    def reciprocal_rank_fusion(self, search_results_dict, num_docs: int=5,  k=60):
+        """使用倒数排序融合算法合并多个搜索结果"""
+        fused_scores = {}
+        for query, doc_scores in search_results_dict.items():
+            for rank, (doc_id, score) in enumerate(doc_scores, start=1):
+                if doc_id not in fused_scores:
+                    fused_scores[doc_id] = 0
+                fused_scores[doc_id] += 1 / (k + rank)
+        reranked_results = sorted(
+            fused_scores.items(),
+            key=lambda x: x[1],
+            reverse=True
+        )
+        return reranked_results[:num_docs]
     
-    
-    
+    def _calculate_score(self, scores: List[float]) -> List[float]:
+        """计算回答置信度"""
+        raw_similarities = [1.0 - d for d in scores]
+
+        min_raw = min(raw_similarities)
+        max_raw = max(raw_similarities)
+
+        if max_raw == min_raw:
+            return [1.0] * len(scores)
+        
+        normalized = [
+            (s - min_raw) / (max_raw - min_raw)
+            for s in raw_similarities
+        ]
+        return normalized
+        
     def get_statistics(self, collection_name: str) -> Dict[str, Any]:
         """
         获取检索统计信息

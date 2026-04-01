@@ -464,7 +464,7 @@ class VectorDatabaseManager:
             
             results = self.vectorstore.similarity_search_with_score(query=query, k=k)
             
-            logger.info(f"搜索查询: '{query}', 返回 {len(results)} 个结果")
+            logger.info(f"搜索查询, 返回 {len(results)} 个结果")
             return results
             
         except Exception as e:

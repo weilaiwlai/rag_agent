@@ -249,7 +249,6 @@ def query_documents():
             'success': True,
             'question': question,
             'answer': result.answer,
-            'confidence': result.confidence,
             'question_type': result.question_type,
             'sources': [
                 {

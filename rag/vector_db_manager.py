@@ -97,12 +97,10 @@ class VectorDatabaseManager:
     def _init_embeddings(self):
         """初始化嵌入模型"""
         try:
-            # 确保 API Key 存在
             if not self.dashscope_api_key:
                  logger.warning("未提供 DashScope API Key，将尝试从环境变量获取")
 
             self.embeddings = embed_model
-            # 简单测试 embedding 是否工作
             try:
                 self.embeddings.embed_query("test")
                 logger.info(f"成功加载并验证 DashScope嵌入模型: {self.embedding_model}")
@@ -112,11 +110,6 @@ class VectorDatabaseManager:
 
         except Exception as e:
             logger.error(f"加载DashScope模型失败: {e}")
-            logger.warning("使用备用HuggingFace模型")
-            self.embeddings = HuggingFaceEmbeddings(
-                model_name="sentence-transformers/all-MiniLM-L6-v2",
-                model_kwargs={'device': 'cpu'}
-            )
 
     def _connect_to_milvus(self):
         """连接到Milvus服务"""

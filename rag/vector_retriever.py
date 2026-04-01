@@ -19,7 +19,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 from utils.config_handler import rag_conf
 from utils.prompt_loader import load_rag_prompts, load_hyde_prompts
-from model.factory import chat_model
+from model.factory import chat_model, rerank_model
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import PromptTemplate
 
@@ -127,15 +127,14 @@ class VectorRetriever:
     def answer_question(self, 
                         question: str, 
                         collection_name: str, 
-                        k: int = 5) -> AnswerResult:
+                        k: int = 5,
+                        cerank: bool = True) -> AnswerResult:
         """
-        回答问题
-        
+        回答问题 
         Args:
             question: 问题文本
             collection_name: Milvus 集合名称
             k: 上下文文档数量
-            
         Returns:
             回答结果
         """
@@ -147,7 +146,6 @@ class VectorRetriever:
             all_queries.extend(hypo_docs)
             
             search_results_dict = {}
-            all_docs_map = {}  
             
             for query in all_queries:
                 query_results = self.search_similar_content(
@@ -155,35 +153,38 @@ class VectorRetriever:
                     collection_name=collection_name,
                     k=k  
                 )
-
-                doc_score_pairs = []
-                for doc, score in query_results:
-                    doc_id = hash(doc.page_content)
-                    doc_score_pairs.append((doc_id, score))
-                    all_docs_map[doc_id] = (doc, score)
                 
-                search_results_dict[query] = doc_score_pairs
+                search_results_dict[query] = query_results
+
+            if cerank:
+                contents, scores = self.cross_encoder_rerank(question, search_results_dict)
+                source_documents = []
+                context_parts = []
+                for content_dict, score in zip(contents, scores):
+                    page_content = content_dict['page_content']
+                    metadata = content_dict['metadata']
+                    doc = Document(page_content=page_content, metadata=metadata)
+                    source_documents.append(doc)
+                    context_parts.append(f"参考资料{len(context_parts)+1}: {doc.page_content}")
+                context = "\n\n".join(context_parts)
+                normalized_scores = scores
+            else:
+                rrf_results = self.reciprocal_rank_fusion(search_results_dict, num_docs=k)
             
-            rrf_results = self.reciprocal_rank_fusion(search_results_dict, num_docs=k)
-            
-            relevant_docs_with_scores = []
-            context_parts = []
-            source_documents = []
-            scores = []
-            
-            for doc_id, rrf_score in rrf_results:  
-                if doc_id in all_docs_map:
-                    doc, original_score = all_docs_map[doc_id]
-                    relevant_docs_with_scores.append((doc, original_score))
+                context_parts = []
+                source_documents = []
+                scores = []
+                
+                for doc, original_score in rrf_results:
                     context_parts.append(f"参考资料{len(context_parts)+1}: {doc.page_content}")
                     source_documents.append(doc)
                     scores.append(original_score)
-            
-            context = "\n\n".join(context_parts)
+                
+                context = "\n\n".join(context_parts)
+
+                normalized_scores = self._calculate_score(scores)
             
             answer = self._generate_answer_with_llm(question, context)
-            
-            normalized_scores = self._calculate_score(scores)
             
             return AnswerResult(
                 answer=answer,
@@ -235,17 +236,54 @@ class VectorRetriever:
     def reciprocal_rank_fusion(self, search_results_dict, num_docs: int=5,  k=60):
         """使用倒数排序融合算法合并多个搜索结果"""
         fused_scores = {}
+        doc_map = {}  # 映射哈希值到(doc, score)元组
+        
         for query, doc_scores in search_results_dict.items():
-            for rank, (doc_id, score) in enumerate(doc_scores, start=1):
-                if doc_id not in fused_scores:
-                    fused_scores[doc_id] = 0
-                fused_scores[doc_id] += 1 / (k + rank)
+            for rank, (doc, score) in enumerate(doc_scores, start=1):
+                doc_hash = hash(doc.page_content)  # 使用文档内容的哈希值作为唯一标识符
+                doc_map[doc_hash] = (doc, score)
+                
+                if doc_hash not in fused_scores:
+                    fused_scores[doc_hash] = 0
+                fused_scores[doc_hash] += 1 / (k + rank)
+        
         reranked_results = sorted(
             fused_scores.items(),
             key=lambda x: x[1],
             reverse=True
         )
-        return reranked_results[:num_docs]
+ 
+        return [(doc_map[doc_hash][0], doc_map[doc_hash][1]) for doc_hash, score in reranked_results[:num_docs]]
+    
+    def cross_encoder_rerank(self, query: str, search_results_dict, top_n: int = 5):
+        """使用交叉编码器重排序"""
+        all_docs_list = []
+        seen_content = set()  
+        
+        for query_text, doc_scores in search_results_dict.items():
+            for doc, score in doc_scores:
+                if doc.metadata is None:
+                    doc.metadata = {}
+                content_hash = hash(doc.page_content)
+                if content_hash not in seen_content:
+                    all_docs_list.append(doc)
+                    seen_content.add(content_hash)
+        
+        rerankmodel = rerank_model
+        reranked_results = rerankmodel.compress_documents(documents=all_docs_list, query=query)
+            
+        contents = []
+        scores = []
+        for idx, doc in enumerate(reranked_results):
+            relevance_score = doc.metadata.get('relevance_score', 'N/A')
+            content_with_metadata = {
+                'page_content': doc.page_content,
+                'metadata': doc.metadata
+            }
+            contents.append(content_with_metadata)
+            scores.append(relevance_score)
+            
+        return contents, scores
     
     def _calculate_score(self, scores: List[float]) -> List[float]:
         """计算回答置信度"""
@@ -264,15 +302,7 @@ class VectorRetriever:
         return normalized
         
     def get_statistics(self, collection_name: str) -> Dict[str, Any]:
-        """
-        获取检索统计信息
-        
-        Args:
-            collection_name: Milvus 集合名称
-
-        Returns:
-            统计信息字典
-        """
+        """获取检索统计信息"""
         db_info = self.db_manager.get_database_info()
         
         stats = {

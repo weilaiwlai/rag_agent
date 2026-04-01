@@ -3,6 +3,7 @@ from typing import Optional
 from langchain_core.embeddings import Embeddings
 from langchain_community.chat_models.tongyi import BaseChatModel
 from langchain_community.embeddings import DashScopeEmbeddings
+from langchain_community.document_compressors.dashscope_rerank import DashScopeRerank
 from langchain_community.chat_models.tongyi import ChatTongyi
 from langchain_openai import ChatOpenAI 
 from utils.config_handler import rag_conf
@@ -31,7 +32,16 @@ class EmbeddingsFactory(BaseModelFactory):
     def generator(self) -> Optional[Embeddings | BaseChatModel]:
         return DashScopeEmbeddings(model=rag_conf["embedding_model_name"], 
                                    dashscope_api_key=rag_conf["dashscope_api_key"])
+    
+class RerankFactory(BaseModelFactory):
+    def generator(self) -> Optional[Embeddings | BaseChatModel]:
+        return DashScopeRerank(
+            model=rag_conf["rerank_model_name"],
+            top_n=rag_conf["rerank_top_n"],
+            dashscope_api_key=rag_conf["dashscope_api_key"], 
+        )
 
 
 chat_model = ChatModelFactory().generator()
 embed_model = EmbeddingsFactory().generator()
+rerank_model = RerankFactory().generator()

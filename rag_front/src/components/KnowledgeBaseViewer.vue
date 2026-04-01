@@ -53,27 +53,6 @@
       <!-- 右侧详情区域 -->
       <div class="details-panel">
         <div v-if="selectedCollection">
-          <!-- 集合统计信息 -->
-          <div class="stats-section">
-            <h3>集合统计</h3>
-            <el-card class="stats-card">
-              <el-descriptions :column="2" border>
-                <el-descriptions-item label="集合名称">
-                  {{ selectedCollection }}
-                </el-descriptions-item>
-                <el-descriptions-item label="文档数量">
-                  {{ collectionStats[selectedCollection]?.document_count || 0 }}
-                </el-descriptions-item>
-                <el-descriptions-item label="主键字段">
-                  {{ collectionStats[selectedCollection]?.primary_field || 'N/A' }}
-                </el-descriptions-item>
-                <el-descriptions-item label="描述">
-                  {{ collectionStats[selectedCollection]?.description || 'N/A' }}
-                </el-descriptions-item>
-              </el-descriptions>
-            </el-card>
-          </div>
-
           <!-- 文档列表 -->
           <div class="documents-section">
             <h3>
@@ -92,7 +71,7 @@
               <el-table
                 :data="documents"
                 style="width: 100%"
-                height="calc(100vh - 350px)"
+                height="500px"
                 :default-sort="{ prop: 'id', order: 'ascending' }"
               >
                 <el-table-column prop="id" label="ID" width="100" sortable />
@@ -104,8 +83,8 @@
                 <el-table-column prop="content" label="内容摘要" min-width="300">
                   <template #default="{ row }">
                     <div class="content-preview" @click="showDocumentDetail(row)" style="cursor: pointer;">
-                      {{ row.content.length > 200 ? row.content.substring(0, 200) + '...' : row.content }}
-                      <el-tag v-if="row.content.length > 200" size="small" type="info" style="margin-left: 10px;">展开</el-tag>
+                      {{ row.content.length > 100 ? row.content.substring(0, 100) + '...' : row.content }}
+                      <el-tag v-if="row.content.length > 100" size="small" type="info" style="margin-left: 10px;">展开</el-tag>
                     </div>
                   </template>
                 </el-table-column>
@@ -143,17 +122,17 @@
               <!-- 分页 -->
               <div class="pagination-wrapper">
                 <el-pagination
-                v-model:current-page="currentPage"
-                v-model:page-size="pageSize"
-                :page-sizes="[10, 20, 50, 100]"
-                layout="total, sizes, prev, pager, next, jumper"
-                :total="totalCount"
-                @size-change="handleSizeChange"
-                @current-change="handleCurrentChange"
-              />
-              <div style="margin-top: 10px; font-size: 14px; color: #606266;">
-                提示：表格中显示的是按来源分组的完整文档，当前页显示 {{ documents.length }} 个文档。
-              </div>
+                  v-model:current-page="currentPage"
+                  v-model:page-size="pageSize"
+                  :page-sizes="[5, 10, 20, 50, 100]"
+                  layout="total, sizes, prev, pager, next, jumper"
+                  :total="totalCount"
+                  @size-change="handleSizeChange"
+                  @current-change="handleCurrentChange"
+                />
+                <div style="margin-top: 10px; font-size: 14px; color: #606266;">
+                  提示：表格中显示的是按来源分组的完整文档，当前页显示 {{ documents.length }} 个文档。
+                </div>
               </div>
             </div>
           </div>
@@ -209,7 +188,7 @@ const selectedCollection = ref('')
 const collectionStats = ref({})
 const documents = ref([])
 const currentPage = ref(1)
-const pageSize = ref(10)
+const pageSize = ref(20) // 默认每页显示20条记录
 const totalDocuments = ref(0)
 const totalCount = ref(0)
 const showDetailDialog = ref(false)
@@ -436,11 +415,13 @@ onMounted(() => {
 
 <style scoped>
 .knowledge-base-viewer {
-  height: calc(100vh - 60px);
+  height: 100vh; /* 调整整体高度 */
   display: flex;
   flex-direction: column;
-  padding: 10px;
+  padding: 10px 30px; /* 增加左右边距，使内容向右移动 */
   box-sizing: border-box;
+  width: calc(100vw + 40px); /* 增加整体宽度 */
+  margin-left: 20px; /* 向右移动 */
 }
 
 .viewer-header {
@@ -538,17 +519,13 @@ onMounted(() => {
   justify-content: center;
 }
 
-.stats-section, .documents-section {
+.documents-section {
   margin-bottom: 25px;
 }
 
-.stats-section h3, .documents-section h3 {
+.documents-section h3 {
   margin-top: 0;
   color: #303133;
-}
-
-.stats-card {
-  margin-top: 15px;
 }
 
 .section-header {
@@ -564,9 +541,12 @@ onMounted(() => {
 }
 
 .content-preview {
-  white-space: nowrap;
+  white-space: pre-wrap; /* 改为pre-wrap以保留换行符和空格 */
+  word-break: break-word; /* 在长单词或URL地址内部进行换行 */
   overflow: hidden;
-  text-overflow: ellipsis;
+  max-height: 40px; /* 进一步限制最大高度 */
+  line-height: 1.3;
+  font-size: 13px; /* 缩小字体 */
 }
 
 .fragment-list {
@@ -602,7 +582,8 @@ onMounted(() => {
 .pagination-wrapper {
   margin-top: 20px;
   display: flex;
-  justify-content: center;
+  flex-direction: column;
+  align-items: center;
 }
 
 .document-detail {

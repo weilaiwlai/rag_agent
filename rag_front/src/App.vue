@@ -48,6 +48,9 @@ body {
 
 .app-container {
   height: 100vh;
+  margin-left: -120px;
+  transform: scale(0.9);
+  transform-origin: 0 0;
 }
 
 .main-layout {
@@ -74,6 +77,7 @@ body {
 .navigation-menu {
   border-bottom: none;
   border-right: none;
+  margin-left: -50px;
 }
 
 .app-main {

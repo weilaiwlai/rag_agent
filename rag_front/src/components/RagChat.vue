@@ -247,10 +247,19 @@ const submitUpload = async () => {
     })
 
     if (response.data.success) {
-      ElMessage.success('上传并入库成功！')
-      uploadSuccess.value = true
+      // 根据文件状态显示不同消息
+      if (response.data.file_status === 'already_exists') {
+        ElMessage.info(response.data.message || '文件已存在，无需重复处理')
+      } else {
+        ElMessage.success(response.data.message || '上传并入库成功！')
+      }
+      
+      // 根据状态决定是否显示成功标记
+      uploadSuccess.value = response.data.file_status !== 'already_exists'
       uploadRef.value.clearFiles()
       fileToUpload.value = null
+    } else {
+      ElMessage.error(response.data.message || '上传失败')
     }
   } catch (error) {
     console.error(error)

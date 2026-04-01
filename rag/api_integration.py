@@ -91,21 +91,48 @@ def upload_document():
             }), 400
         
         # 处理文档
-        success = vector_manager.process_file(file_path, collection_name)
-        
-        if success:
-            # 获取数据库信息
-            db_info = vector_manager.get_database_info(collection_name)
+        try:
+            # 调用更新后的process_file方法，它返回详细的状态信息
+            result = vector_manager.process_file(file_path, collection_name)
             
-            return jsonify({
-                'success': True,
-                'message': f'文档处理成功: {file_path}',
-                'database_info': db_info
-            })
-        else:
+            # 根据返回的状态进行处理
+            if result['status'] == 'already_exists':
+                # 文件已存在，返回成功状态
+                db_info = vector_manager.get_database_info(collection_name)
+                return jsonify({
+                    'success': True,
+                    'message': result['message'],
+                    'file_status': 'already_exists',
+                    'database_info': db_info
+                })
+            elif result['status'] == 'processed_new':
+                # 新文件已处理，返回成功状态
+                db_info = vector_manager.get_database_info(collection_name)
+                return jsonify({
+                    'success': True,
+                    'message': result['message'],
+                    'file_status': 'processed_new',
+                    'database_info': db_info
+                })
+            elif result['status'] == 'load_failed':
+                # 文档加载失败
+                return jsonify({
+                    'success': False,
+                    'message': result['message'],
+                    'file_status': 'load_failed'
+                }), 500
+            else:  # exception 或其他错误情况
+                return jsonify({
+                    'success': False,
+                    'message': result['message'],
+                    'file_status': result['status']
+                }), 500
+        except Exception as e:
+            logger.error(f"文档处理异常: {str(e)}")
             return jsonify({
                 'success': False,
-                'message': f'文档处理失败: {file_path}'
+                'message': f'文档处理异常: {str(e)}',
+                'file_status': 'exception_occurred'
             }), 500
             
     except Exception as e:
@@ -139,21 +166,51 @@ def upload_file():
         file.save(file_path)
         
         try:
-            success = vector_manager.process_file(file_path, collection_name)
-            if success:
+            # 调用更新后的process_file方法，它返回详细的状态信息
+            result = vector_manager.process_file(file_path, collection_name)
+            
+            # 根据返回的状态进行处理
+            if result['status'] == 'already_exists':
+                # 文件已存在，返回成功状态
+                db_info = vector_manager.get_database_info(collection_name)
+                return jsonify({
+                    'success': True,
+                    'message': result['message'],
+                    'file_status': 'already_exists',
+                    'database_info': db_info
+                })
+            elif result['status'] == 'processed_new':
+                # 新文件已处理，返回成功状态
                 db_info = vector_manager.get_database_info(collection_name)
                 return jsonify({
                     'success': True,
                     'message': f'文件上传并处理成功: {filename}',
+                    'file_status': 'processed_new',
                     'database_info': db_info
                 })
-            else:
-                 return jsonify({'success': False, 'message': '文件处理失败'}), 500
+            elif result['status'] == 'load_failed':
+                # 文档加载失败
+                return jsonify({
+                    'success': False,
+                    'message': result['message'],
+                    'file_status': 'load_failed'
+                }), 500
+            else:  # exception 或其他错误情况
+                return jsonify({
+                    'success': False,
+                    'message': result['message'],
+                    'file_status': result['status']
+                }), 500
         except Exception as e:
-             return jsonify({'success': False, 'message': str(e)}), 500
+            logger.error(f"文件处理异常: {str(e)}")
+            return jsonify({
+                'success': False,
+                'message': str(e),
+                'file_status': 'exception_occurred'
+            }), 500
         finally:
             # 可选：处理完后删除临时文件，或者保留
-            # os.remove(file_path)
+            os.remove(file_path)
             pass
 
     return jsonify({'success': False, 'message': '上传失败'}), 500

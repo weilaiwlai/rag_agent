@@ -36,6 +36,8 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 from utils.config_handler import rag_conf
 from model.factory import embed_model
+from utils.path_tool import get_abs_path
+from utils.file_handler import get_file_md5_hex
 
 # 配置日志
 logging.basicConfig(level=logging.INFO)
@@ -134,7 +136,7 @@ class VectorDatabaseManager:
                 self.vectorstore = Milvus(
                     embedding_function=self.embeddings,
                     collection_name=collection_name,
-                    connection_args={"host": self.milvus_host, "port": self.milvus_port}
+                    connection_args={"uri": f"http://{self.milvus_host}:{self.milvus_port}"}
                 )
                 logger.info(f"成功加载现有Milvus集合: {collection_name}")
             except Exception as e:
@@ -228,7 +230,7 @@ class VectorDatabaseManager:
                     self.vectorstore = Milvus(
                         embedding_function=self.embeddings,
                         collection_name=target_collection,
-                        connection_args={"host": self.milvus_host, "port": self.milvus_port},
+                        connection_args={"uri": f"http://{self.milvus_host}:{self.milvus_port}"}
                         # 关键：auto_id=True 通常是默认的，但确保配置一致
                     )
                     self.collection_name = target_collection
@@ -241,7 +243,7 @@ class VectorDatabaseManager:
                         documents=documents,
                         embedding=self.embeddings,
                         collection_name=target_collection,
-                        connection_args={"host": self.milvus_host, "port": self.milvus_port},
+                        connection_args={"uri": f"http://{self.milvus_host}:{self.milvus_port}"},
                         drop_old=False # 明确不删除旧的（虽然这里是else分支，本身就不存在）
                     )
                     self.collection_name = target_collection
@@ -264,7 +266,7 @@ class VectorDatabaseManager:
                         documents=documents,
                         embedding=self.embeddings,
                         collection_name=target_collection,
-                        connection_args={"host": self.milvus_host, "port": self.milvus_port},
+                        connection_args={"uri": f"http://{self.milvus_host}:{self.milvus_port}"},
                         drop_old=True
                      )
                      self.collection_name = target_collection
@@ -275,8 +277,50 @@ class VectorDatabaseManager:
             else:
                 logger.error(f"添加文档到Milvus失败: {e}")
                 raise e
+            
+    def _get_collection_md5_file_path(self, collection_name: str = None) -> str:
+        """获取指定集合的MD5文件路径"""
+        target_collection = collection_name or self.collection_name
+        # 创建 md5/collection_name 目录结构
+        collection_md5_dir = os.path.join(os.path.dirname(get_abs_path(rag_conf["md5_hex_store"])), "md5", target_collection)
+        os.makedirs(collection_md5_dir, exist_ok=True)
+        # MD5文件名为 md5.txt
+        collection_md5_file = os.path.join(collection_md5_dir, "md5.txt")
+        return collection_md5_file
 
-    def process_file(self, file_path: str, collection_name: str = None) -> bool:
+    def check_file_md5(self, file_path: str, collection_name: str = None) -> bool:
+        def check_md5_hex(md5_for_check: str, md5_file_path: str):
+            if not os.path.exists(md5_file_path):
+                # 创建文件
+                os.makedirs(os.path.dirname(md5_file_path), exist_ok=True)
+                with open(md5_file_path, "w", encoding="utf-8") as f:
+                    pass  # 创建空文件
+                return False            # md5 没处理过
+
+            with open(md5_file_path, "r", encoding="utf-8") as f:
+                for line in f.readlines():
+                    line = line.strip()
+                    if line == md5_for_check:
+                        return True     # md5 处理过
+                return False            # md5 没处理过
+
+        def save_md5_hex(md5_for_check: str, md5_file_path: str):
+            with open(md5_file_path, "a", encoding="utf-8") as f:
+                f.write(md5_for_check + "\n")
+
+        # 获取当前集合对应的MD5文件路径
+        collection_md5_file = self._get_collection_md5_file_path(collection_name)
+        
+        md5_hex = get_file_md5_hex(file_path)
+
+        if check_md5_hex(md5_hex, collection_md5_file):
+            logger.info(f"[加载知识库]{file_path}内容已经存在于集合 {collection_name or self.collection_name} 内，跳过")
+            return False
+        
+        save_md5_hex(md5_hex, collection_md5_file)
+        return True
+
+    def process_file(self, file_path: str, collection_name: str = None) -> Dict[str, Any]:
         """
         处理单个文件：加载、切分、存储
         
@@ -285,23 +329,43 @@ class VectorDatabaseManager:
             collection_name: 集合名称
             
         Returns:
-            处理是否成功
+            包含处理状态的字典
         """
         try:
+            if not self.check_file_md5(file_path, collection_name):
+                logger.info(f"文件已保存: {file_path}")
+                return {
+                    'success': True,
+                    'status': 'already_exists',
+                    'message': f'文件已存在，无需重复处理: {file_path}'
+                }
+            
             logger.info(f"开始处理文件: {file_path}")
             documents = self.load_document(file_path)
             if not documents:
-                return False
+                return {
+                    'success': False,
+                    'status': 'load_failed',
+                    'message': f'文档加载失败: {file_path}'
+                }
             
             split_docs = self.split_documents(documents)
             self.add_documents_to_db(split_docs, collection_name)
             
             logger.info(f"文件处理完成: {file_path}")
-            return True
+            return {
+                'success': True,
+                'status': 'processed_new',
+                'message': f'文件处理完成: {file_path}'
+            }
             
         except Exception as e:
             logger.error(f"处理文件失败 {file_path}: {e}")
-            return False
+            return {
+                'success': False,
+                'status': 'exception',
+                'message': f'处理文件失败 {file_path}: {str(e)}'
+            }
 
     def process_csv_data(self, csv_path: str,
                          text_columns: List[str] = None,
@@ -399,6 +463,7 @@ class VectorDatabaseManager:
                 logger.warning("Milvus集成当前不支持直接的元数据过滤，该过滤器将被忽略。")
             
             results = self.vectorstore.similarity_search_with_score(query=query, k=k)
+            
             logger.info(f"搜索查询: '{query}', 返回 {len(results)} 个结果")
             return results
             
@@ -434,7 +499,7 @@ class VectorDatabaseManager:
                         self.vectorstore = Milvus(
                             embedding_function=self.embeddings,
                             collection_name=target_collection,
-                            connection_args={"host": self.milvus_host, "port": self.milvus_port}
+                            connection_args={"uri": f"http://{self.milvus_host}:{self.milvus_port}"}
                         )
                         info["is_initialized"] = True
                      except:

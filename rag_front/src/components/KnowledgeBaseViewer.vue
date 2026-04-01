@@ -70,7 +70,7 @@
             <h3>
               文档列表
               <el-tag type="info" size="small" effect="plain">
-                共 {{ totalDocuments }} 条
+                共 {{ totalDocuments }} 个文档
               </el-tag>
             </h3>
             
@@ -102,7 +102,7 @@
                 </el-table-column>
                 <el-table-column prop="full_length" label="长度" width="100" sortable />
                 <el-table-column prop="fragment_count" label="片段数" width="100" sortable />
-                <el-table-column label="操作" width="120">
+                <el-table-column label="操作" width="180">
                   <template #default="{ row }">
                     <el-button 
                       size="small" 
@@ -112,6 +112,21 @@
                     >
                       详情
                     </el-button>
+                    <el-divider direction="vertical" />
+                    <el-popconfirm
+                      title="确定要删除此文档的所有片段吗？"
+                      @confirm="deleteDocumentBySource(row.id)"
+                    >
+                      <template #reference>
+                        <el-button 
+                          size="small" 
+                          type="danger" 
+                          text 
+                        >
+                          删除
+                        </el-button>
+                      </template>
+                    </el-popconfirm>
                   </template>
                 </el-table-column>
               </el-table>
@@ -128,7 +143,7 @@
                 @current-change="handleCurrentChange"
               />
               <div style="margin-top: 10px; font-size: 14px; color: #606266;">
-                提示：表格中显示的是按来源分组的完整文档，总片段数为 {{ totalCount }}，当前页显示 {{ documents.length }} 个文档。
+                提示：表格中显示的是按来源分组的完整文档，当前页显示 {{ documents.length }} 个文档。
               </div>
               </div>
             </div>
@@ -254,7 +269,7 @@ const loadDocuments = async () => {
     
     if (response.data.success) {
       documents.value = response.data.documents || []
-      totalDocuments.value = response.data.total_count || 0
+      totalDocuments.value = response.data.documents ? response.data.documents.length : 0
       totalCount.value = response.data.total_count || 0
     } else {
       ElMessage.error(response.data.message || '获取文档列表失败')
@@ -307,6 +322,49 @@ const deleteDocument = async (docId) => {
   } catch (error) {
     console.error('删除文档失败:', error)
     ElMessage.error('删除文档失败: ' + (error.response?.data?.message || error.message))
+  } finally {
+    loading.value.delete = false
+  }
+}
+
+// 按source删除文档的所有片段
+const deleteDocumentBySource = async (docId) => {
+  if (!selectedCollection.value) {
+    ElMessage.warning('请先选择一个集合')
+    return
+  }
+  
+  loading.value.delete = true
+  try {
+    // 获取文档的source值
+    const doc = documents.value.find(d => d.id === docId);
+    if (!doc) {
+      ElMessage.error('找不到对应的文档')
+      return
+    }
+    
+    const sourceValue = doc.metadata?.source;
+    if (!sourceValue) {
+      ElMessage.error('文档没有source字段');
+      return;
+    }
+    
+    // 使用原生的encodeURI而不是encodeURIComponent，更好地处理路径
+    const encodedSource = encodeURIComponent(sourceValue).replace(/%5C/g, '%5C%5C'); // 处理反斜杠
+    const response = await axios.delete(
+      `${API_BASE}/collections/${selectedCollection.value}/documents-by-source/${encodedSource}`
+    );
+    
+    if (response.data.success) {
+      ElMessage.success(`成功删除文档 ${docId} 的所有片段: ${response.data.message}`)
+      // 重新加载文档列表
+      await loadDocuments()
+    } else {
+      ElMessage.error(response.data.message || '删除文档片段失败')
+    }
+  } catch (error) {
+    console.error('删除文档片段失败:', error)
+    ElMessage.error('删除文档片段失败: ' + (error.response?.data?.message || error.message))
   } finally {
     loading.value.delete = false
   }

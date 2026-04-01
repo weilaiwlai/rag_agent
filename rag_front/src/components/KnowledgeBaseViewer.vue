@@ -34,6 +34,15 @@
             <el-icon><Collection /></el-icon>
             <span>{{ collection }}</span>
             <el-tag size="small" type="info">{{ collectionStats[collection]?.document_count || 0 }}</el-tag>
+            <el-button 
+              size="small" 
+              type="warning" 
+              text 
+              @click.stop="clearCollection(collection)"
+              :loading="loading.collections"
+            >
+              清空
+            </el-button>
           </div>
           <div v-if="collections.length === 0 && !loading.collections" class="empty-state">
             <el-empty description="暂无集合" />
@@ -89,7 +98,7 @@
                 <el-table-column prop="id" label="ID" width="100" sortable />
                 <el-table-column prop="metadata.source" label="文件名" width="200">
                   <template #default="{ row }">
-                    {{ getFileName(row.metadata?.source) || '未知' }}
+                    {{ row.metadata?.source || '未知' }}
                   </template>
                 </el-table-column>
                 <el-table-column prop="content" label="内容摘要" min-width="300">
@@ -188,7 +197,7 @@ import {
   Collection,
   Document
 } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import axios from 'axios'
 
 // API基础URL
@@ -370,12 +379,54 @@ const deleteDocumentBySource = async (docId) => {
   }
 }
 
-// 获取文件名的辅助函数
-const getFileName = (filePath) => {
-  if (!filePath) return '未知'
-  // 提取文件路径中的文件名部分
-  return filePath.split('/').pop().split('\\').pop() || filePath
+// 清空集合
+const clearCollection = async (collectionName) => {
+  if (!collectionName) {
+    ElMessage.warning('请先选择一个集合')
+    return
+  }
+  
+  try {
+    // 使用ElMessageBox确认操作
+    await ElMessageBox.confirm(
+      `确定要清空集合 "${collectionName}" 吗？此操作将删除集合中的所有文档片段！`,
+      '警告',
+      {
+        confirmButtonText: '确定',
+        cancelButtonText: '取消',
+        type: 'warning',
+      }
+    )
+    
+    loading.value.collections = true
+    
+    const response = await axios.post(`${API_BASE}/clear_collection`, {
+      collection_name: collectionName
+    })
+    
+    if (response.data.success) {
+      ElMessage.success(response.data.message)
+      // 重新加载集合统计信息
+      await loadCollectionStats(collectionName)
+      // 如果是当前选中的集合，则重新加载文档列表
+      if (selectedCollection.value === collectionName) {
+        await loadDocuments()
+      }
+      // 重新加载集合列表
+      await loadCollections()
+    } else {
+      ElMessage.error(response.data.message || '清空集合失败')
+    }
+  } catch (error) {
+    if (error !== 'cancel') { // 如果不是用户取消操作
+      console.error('清空集合失败:', error)
+      ElMessage.error('清空集合失败: ' + (error.response?.data?.message || error.message))
+    }
+  } finally {
+    loading.value.collections = false
+  }
 }
+
 
 // 初始化
 onMounted(() => {
@@ -459,7 +510,11 @@ onMounted(() => {
 }
 
 .collection-item .el-tag {
-  margin-left: auto;
+  margin-right: auto;
+}
+
+.collection-item .el-button {
+  margin-left: 8px;
 }
 
 .empty-state {

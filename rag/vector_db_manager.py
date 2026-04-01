@@ -340,7 +340,7 @@ class VectorDatabaseManager:
                     'message': f'文件已存在，无需重复处理: {file_path}'
                 }
             
-            logger.info(f"开始处理文件: {file_path}")
+            logger.info(f"开始处理文件1111: {file_path}")
             documents = self.load_document(file_path)
             if not documents:
                 return {
@@ -350,6 +350,12 @@ class VectorDatabaseManager:
                 }
             
             split_docs = self.split_documents(documents)
+            for doc in split_docs:
+                if 'source' in doc.metadata:
+                # 提取文件名而非完整路径
+                    full_path = doc.metadata['source']
+                    filename = os.path.basename(full_path)
+                    doc.metadata['source'] = filename
             self.add_documents_to_db(split_docs, collection_name)
             
             logger.info(f"文件处理完成: {file_path}")
@@ -394,7 +400,8 @@ class VectorDatabaseManager:
             documents = []
             for idx, row in df.iterrows():
                 content_parts = []
-                metadata = {"source": csv_path, "row_index": idx}
+                base_name, extension = os.path.splitext(os.path.basename(csv_path))
+                metadata = {"source": base_name, "row_index": idx}
                 
                 for col in text_columns:
                     if pd.notna(row[col]):
@@ -512,13 +519,13 @@ class VectorDatabaseManager:
         
         return info
 
-    def clear_database(self):
+    def clear_database(self,collection_name):
         """清空Milvus集合"""
         try:
-            if utility.has_collection(self.collection_name):
-                utility.drop_collection(self.collection_name)
+            if utility.has_collection(collection_name):
+                utility.drop_collection(collection_name)
                 self.vectorstore = None
-                logger.info(f"Milvus集合 '{self.collection_name}' 已被删除")
+                logger.info(f"Milvus集合 '{collection_name}' 已被删除")
         except Exception as e:
             logger.error(f"清空Milvus集合失败: {e}")
 

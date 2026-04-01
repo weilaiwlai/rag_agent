@@ -79,9 +79,11 @@ class DocumentLoader:
             documents = loader.load()
             
             # 添加文件信息到元数据
+            base_name, extension = os.path.splitext(os.path.basename(file_path))
+            logging.info(f"加载文本文件 {file_path}，文件名 {base_name}，扩展名 {extension}")
             for doc in documents:
                 doc.metadata.update({
-                    'source': file_path,
+                    'source': base_name,
                     'file_type': 'text',
                     'file_name': Path(file_path).name
                 })
@@ -98,9 +100,10 @@ class DocumentLoader:
             documents = loader.load()
             
             # 添加文件信息到元数据
+            base_name, extension = os.path.splitext(os.path.basename(file_path))
             for doc in documents:
                 doc.metadata.update({
-                    'source': file_path,
+                    'source': base_name,
                     'file_type': 'csv',
                     'file_name': Path(file_path).name
                 })
@@ -117,9 +120,10 @@ class DocumentLoader:
             documents = loader.load()
             
             # 添加文件信息到元数据
+            base_name, extension = os.path.splitext(os.path.basename(file_path))
             for i, doc in enumerate(documents):
                 doc.metadata.update({
-                    'source': file_path,
+                    'source': base_name,
                     'file_type': 'pdf',
                     'file_name': Path(file_path).name,
                     'page_number': i + 1
@@ -137,9 +141,10 @@ class DocumentLoader:
             documents = loader.load()
             
             # 添加文件信息到元数据
+            base_name, extension = os.path.splitext(os.path.basename(file_path))
             for doc in documents:
                 doc.metadata.update({
-                    'source': file_path,
+                    'source': base_name,
                     'file_type': 'docx',
                     'file_name': Path(file_path).name
                 })
@@ -156,9 +161,10 @@ class DocumentLoader:
             documents = loader.load()
             
             # 添加文件信息到元数据
+            base_name, extension = os.path.splitext(os.path.basename(file_path))
             for doc in documents:
                 doc.metadata.update({
-                    'source': file_path,
+                    'source': base_name,
                     'file_type': 'excel',
                     'file_name': Path(file_path).name
                 })
@@ -269,8 +275,9 @@ class DocumentLoader:
             documents = []
             for idx, row in df.iterrows():
                 content_parts = []
+                base_name, extension = os.path.splitext(os.path.basename(csv_path))
                 metadata = {
-                    'source': csv_path,
+                    'source': base_name,
                     'file_type': 'csv',
                     'row_index': idx
                 }

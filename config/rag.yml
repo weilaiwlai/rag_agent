@@ -1,0 +1,24 @@
+
+MILVUS_HOST: 202.204.62.144
+MILVUS_PORT: 19530
+COLLECTION_NAME: agent_rag
+
+chat_model_name: qwen3-max
+embedding_model_name: text-embedding-v4
+dashscope_api_key: 
+
+# Flask Server Configuration
+FLASK_HOST: 0.0.0.0
+FLASK_PORT: 5000
+FLASK_DEBUG: True
+
+collection_name: agent
+persist_directory: chroma_db
+k: 3
+data_path: data
+md5_hex_store: md5.text
+allow_knowledge_file_type: ["txt", "pdf"]
+
+chunk_size: 200
+chunk_overlap: 20
+separators: ["\n\n", "\n", ".", "!", "?", "。", "！", "？", " ", ""]

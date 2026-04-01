@@ -13,6 +13,7 @@ from pathlib import Path
 from vector_db_manager import VectorDatabaseManager
 from vector_retriever import VectorRetriever
 from document_loader import DocumentLoader
+from view_knowledge_base import KnowledgeBaseViewer
 
 import sys
 from pathlib import Path
@@ -26,6 +27,7 @@ vector_bp = Blueprint('vector', __name__, url_prefix='/api/vector')
 # 全局变量存储向量系统实例
 vector_manager: VectorDatabaseManager = None
 vector_retriever: VectorRetriever = None
+knowledge_base_viewer: KnowledgeBaseViewer = None
 
 # 临时上传目录
 UPLOAD_FOLDER = '/tmp/vector_uploads'
@@ -44,7 +46,7 @@ def init_vector_system(
     dashscope_api_key: str = rag_conf["dashscope_api_key"]
 ):
     """初始化向量系统"""
-    global vector_manager, vector_retriever
+    global vector_manager, vector_retriever, knowledge_base_viewer
     
     try:
         vector_manager = VectorDatabaseManager(
@@ -54,6 +56,7 @@ def init_vector_system(
             dashscope_api_key=dashscope_api_key
         )
         vector_retriever = VectorRetriever(vector_manager)
+        knowledge_base_viewer = KnowledgeBaseViewer(milvus_host=milvus_host, milvus_port=milvus_port)
         logger.info(f"向量系统初始化成功，连接到 Milvus at {milvus_host}:{milvus_port}")
         return True
     except Exception as e:
@@ -378,6 +381,167 @@ def clear_collection():
         return jsonify({
             'success': False,
             'message': f'清空数据库失败: {str(e)}'
+        }), 500
+
+
+@vector_bp.route('/collections', methods=['GET'])
+def list_collections():
+    """列出所有集合"""
+    global knowledge_base_viewer
+    
+    if not knowledge_base_viewer:
+        return jsonify({
+            'success': False,
+            'message': '知识库查看器未初始化'
+        }), 400
+    
+    try:
+        collections = knowledge_base_viewer.list_all_collections()
+        return jsonify({
+            'success': True,
+            'collections': collections
+        })
+    except Exception as e:
+        logger.error(f"获取集合列表API错误: {str(e)}")
+        return jsonify({
+            'success': False,
+            'message': f'获取集合列表失败: {str(e)}'
+        }), 500
+
+
+@vector_bp.route('/collections/<collection_name>/stats', methods=['GET'])
+def get_collection_stats(collection_name):
+    """获取集合统计信息"""
+    global knowledge_base_viewer
+    
+    if not knowledge_base_viewer:
+        return jsonify({
+            'success': False,
+            'message': '知识库查看器未初始化'
+        }), 400
+    
+    try:
+        stats = knowledge_base_viewer.get_collection_stats(collection_name)
+        if stats:
+            return jsonify({
+                'success': True,
+                'stats': stats
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'message': f'集合 {collection_name} 不存在'
+            }), 400
+    except Exception as e:
+        logger.error(f"获取集合统计信息API错误: {str(e)}")
+        return jsonify({
+            'success': False,
+            'message': f'获取集合统计信息失败: {str(e)}'
+        }), 500
+
+
+@vector_bp.route('/collections/<collection_name>/documents', methods=['GET'])
+def list_documents_in_collection(collection_name):
+    """列出集合中的文档"""
+    global knowledge_base_viewer
+    
+    if not knowledge_base_viewer:
+        return jsonify({
+            'success': False,
+            'message': '知识库查看器未初始化'
+        }), 400
+    
+    try:
+        # 从查询参数获取limit，默认为100
+        limit = int(request.args.get('limit', 100))
+        page = int(request.args.get('page', 1))
+        
+        # 计算偏移量
+        offset = (page - 1) * limit
+        
+        # 由于现有方法不支持分页，我们获取所有文档然后手动分页
+        result = knowledge_base_viewer.list_documents_in_collection(collection_name, limit=limit)
+        
+        return jsonify({
+            'success': True,
+            'documents': result['documents'],
+            'total_count': result['total_count'],
+            'page': page,
+            'limit': limit,
+            'total_pages': (result['total_count'] + limit - 1) // limit  # 向上取整计算总页数
+        })
+    except Exception as e:
+        logger.error(f"获取集合文档列表API错误: {str(e)}")
+        return jsonify({
+            'success': False,
+            'message': f'获取集合文档列表失败: {str(e)}'
+        }), 500
+
+
+@vector_bp.route('/collections/<collection_name>/search', methods=['GET'])
+def search_documents_in_collection(collection_name):
+    """在集合中搜索文档"""
+    global knowledge_base_viewer
+    
+    if not knowledge_base_viewer:
+        return jsonify({
+            'success': False,
+            'message': '知识库查看器未初始化'
+        }), 400
+    
+    try:
+        query = request.args.get('q', '')
+        limit = int(request.args.get('limit', 5))
+        
+        if not query:
+            return jsonify({
+                'success': False,
+                'message': '请提供搜索查询参数 q'
+            }), 400
+        
+        results = knowledge_base_viewer.search_in_collection(collection_name, query_text=query, top_k=limit)
+        
+        return jsonify({
+            'success': True,
+            'results': results
+        })
+    except Exception as e:
+        logger.error(f"搜索集合文档API错误: {str(e)}")
+        return jsonify({
+            'success': False,
+            'message': f'搜索集合文档失败: {str(e)}'
+        }), 500
+
+
+@vector_bp.route('/collections/<collection_name>/documents/<int:doc_id>', methods=['DELETE'])
+def delete_document_by_id(collection_name, doc_id):
+    """根据ID删除文档"""
+    global knowledge_base_viewer
+    
+    if not knowledge_base_viewer:
+        return jsonify({
+            'success': False,
+            'message': '知识库查看器未初始化'
+        }), 400
+    
+    try:
+        success = knowledge_base_viewer.delete_document_by_id(collection_name, doc_id)
+        
+        if success:
+            return jsonify({
+                'success': True,
+                'message': f'文档 {doc_id} 已从集合 {collection_name} 中删除'
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'message': f'删除文档 {doc_id} 失败'
+            }), 400
+    except Exception as e:
+        logger.error(f"删除文档API错误: {str(e)}")
+        return jsonify({
+            'success': False,
+            'message': f'删除文档失败: {str(e)}'
         }), 500
 
 

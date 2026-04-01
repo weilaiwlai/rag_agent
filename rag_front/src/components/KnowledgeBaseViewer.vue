@@ -65,30 +65,6 @@
             </el-card>
           </div>
 
-          <!-- 搜索和筛选 -->
-          <div class="search-section">
-            <div class="search-controls">
-              <el-input
-                v-model="searchQuery"
-                placeholder="搜索文档内容..."
-                clearable
-                @keyup.enter="performSearch"
-                class="search-input"
-              >
-                <template #prepend>
-                  <el-icon><Search /></el-icon>
-                </template>
-              </el-input>
-              <el-button 
-                type="primary" 
-                @click="performSearch"
-                :loading="loading.search"
-              >
-                搜索
-              </el-button>
-            </div>
-          </div>
-
           <!-- 文档列表 -->
           <div class="documents-section">
             <h3>
@@ -107,13 +83,13 @@
               <el-table
                 :data="documents"
                 style="width: 100%"
-                height="500"
+                height="calc(100vh - 350px)"
                 :default-sort="{ prop: 'id', order: 'ascending' }"
               >
                 <el-table-column prop="id" label="ID" width="100" sortable />
-                <el-table-column prop="metadata.source" label="来源" width="200">
+                <el-table-column prop="metadata.source" label="文件名" width="200">
                   <template #default="{ row }">
-                    {{ row.metadata?.source || '未知' }}
+                    {{ getFileName(row.metadata?.source) || '未知' }}
                   </template>
                 </el-table-column>
                 <el-table-column prop="content" label="内容摘要" min-width="300">
@@ -194,8 +170,7 @@
 import { ref, onMounted } from 'vue'
 import { 
   Refresh, 
-  Collection, 
-  Search,
+  Collection,
   Document
 } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
@@ -209,7 +184,6 @@ const collections = ref([])
 const selectedCollection = ref('')
 const collectionStats = ref({})
 const documents = ref([])
-const searchQuery = ref('')
 const currentPage = ref(1)
 const pageSize = ref(10)
 const totalDocuments = ref(0)
@@ -221,7 +195,6 @@ const currentDocument = ref(null)
 const loading = ref({
   collections: false,
   documents: false,
-  search: false,
   delete: false
 })
 
@@ -294,36 +267,6 @@ const loadDocuments = async () => {
   }
 }
 
-// 执行搜索
-const performSearch = async () => {
-  if (!selectedCollection.value) {
-    ElMessage.warning('请先选择一个集合')
-    return
-  }
-
-  loading.value.search = true
-  try {
-    const response = await axios.get(`${API_BASE}/collections/${selectedCollection.value}/search`, {
-      params: {
-        q: searchQuery.value,
-        limit: pageSize.value
-      }
-    })
-    
-    if (response.data.success) {
-      documents.value = response.data.results || []
-      totalDocuments.value = response.data.results?.length || 0
-    } else {
-      ElMessage.error(response.data.message || '搜索失败')
-    }
-  } catch (error) {
-    console.error('搜索失败:', error)
-    ElMessage.error('搜索失败: ' + (error.response?.data?.message || error.message))
-  } finally {
-    loading.value.search = false
-  }
-}
-
 // 显示文档详情
 const showDocumentDetail = (document) => {
   currentDocument.value = document
@@ -369,6 +312,13 @@ const deleteDocument = async (docId) => {
   }
 }
 
+// 获取文件名的辅助函数
+const getFileName = (filePath) => {
+  if (!filePath) return '未知'
+  // 提取文件路径中的文件名部分
+  return filePath.split('/').pop().split('\\').pop() || filePath
+}
+
 // 初始化
 onMounted(() => {
   loadCollections()
@@ -377,37 +327,42 @@ onMounted(() => {
 
 <style scoped>
 .knowledge-base-viewer {
-  height: 100vh;
+  height: calc(100vh - 60px);
   display: flex;
   flex-direction: column;
+  padding: 10px;
+  box-sizing: border-box;
 }
 
 .viewer-header {
-  padding: 20px;
-  background: #ffffff;
-  border-bottom: 1px solid #ebeef5;
+  padding: 15px 20px;
+  background: #f5f7fa;
+  border-radius: 6px;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  margin-bottom: 10px;
 }
 
 .viewer-header h2 {
   margin: 0;
   color: #303133;
+  font-size: 18px;
 }
 
 .viewer-container {
   display: flex;
   flex: 1;
   overflow: hidden;
+  border-radius: 6px;
+  border: 1px solid #ebeef5;
 }
 
 .collections-panel {
-  width: 300px;
+  width: 250px;
   background: #fafafa;
   border-right: 1px solid #ebeef5;
-  padding: 20px;
+  padding: 15px;
   overflow-y: auto;
 }
 
@@ -456,9 +411,11 @@ onMounted(() => {
 
 .details-panel {
   flex: 1;
-  padding: 20px;
+  padding: 15px;
   overflow-y: auto;
   background: #ffffff;
+  display: flex;
+  flex-direction: column;
 }
 
 .welcome-panel {
@@ -468,23 +425,17 @@ onMounted(() => {
   justify-content: center;
 }
 
-.stats-section, .search-section, .documents-section {
+.stats-section, .documents-section {
   margin-bottom: 25px;
 }
 
-.stats-section h3, .search-section h3, .documents-section h3 {
+.stats-section h3, .documents-section h3 {
   margin-top: 0;
   color: #303133;
 }
 
 .stats-card {
   margin-top: 15px;
-}
-
-.search-controls {
-  display: flex;
-  gap: 10px;
-  align-items: center;
 }
 
 .section-header {
@@ -562,11 +513,6 @@ onMounted(() => {
   word-break: break-all;
   max-height: 300px;
   overflow-y: auto;
-}
-
-.content-text {
-  font-size: 14px;
-  line-height: 1.5;
 }
 
 .content-text {

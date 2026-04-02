@@ -8,8 +8,11 @@ from langchain_community.document_loaders import TextLoader, PyPDFium2Loader, Do
 from langchain_text_splitters import CharacterTextSplitter
 from langchain_community.embeddings import DashScopeEmbeddings
 from pymilvus import connections, Collection, CollectionSchema, DataType, FieldSchema, utility
+from langchain_milvus import BM25BuiltInFunction, Milvus
 import sys
 from pathlib import Path
+import numpy as np
+from scipy.sparse import csr_matrix
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 from utils.config_handler import rag_conf
@@ -32,11 +35,17 @@ class SimpleDocumentUploader:
         self.dashscope_api_key = dashscope_api_key
         self.embedding_model = embedding_model
         
+        # 初始化嵌入模型
+        self.embeddings = embed_model
+        
         # 连接到Milvus
         self.connect_milvus()
+        
+        # 删除现有集合（如果存在）
         self.drop_collection()
-        # 创建集合
-        self.create_collection_if_not_exists()
+        
+        # 初始化向量存储
+        self.vectorstore = None
         
     def connect_milvus(self):
         """连接到Milvus数据库"""
@@ -45,52 +54,7 @@ class SimpleDocumentUploader:
         
     def get_embedding(self, texts):
         """生成文本嵌入向量"""
-        embeddings_model = embed_model
-        return embeddings_model.embed_documents(texts)
-        
-    def get_schema(self):
-        """定义Milvus集合的模式"""
-        fields = [
-            FieldSchema(name="id", dtype=DataType.INT64, is_primary=True, auto_id=True),
-            FieldSchema(name="name", dtype=DataType.VARCHAR, max_length=255),
-            FieldSchema(name="text", dtype=DataType.VARCHAR, max_length=5000),
-            FieldSchema(name="embedding", dtype=DataType.FLOAT_VECTOR, dim=1024)
-        ]
-        return CollectionSchema(fields=fields, description="文本嵌入集合")
-        
-    def create_collection_if_not_exists(self):
-        """创建集合（如果不存在）"""
-        if not utility.has_collection(self.collection_name):
-            schema = self.get_schema()
-            collection = Collection(name=self.collection_name, schema=schema)
-            
-            # 创建索引
-            index_params = {
-                "index_type": "AUTOINDEX",
-                "metric_type": "L2",
-                "params": {}
-            }
-            collection.create_index(field_name="embedding", index_params=index_params)
-            collection.load()
-            print(f"集合 '{self.collection_name}' 已创建并加载")
-        else:
-            print(f"集合 '{self.collection_name}' 已存在")
-            
-        self.collection = Collection(name=self.collection_name)
-        
-    def insert_data(self, names, texts, embeddings):
-        """插入数据到Milvus"""
-        # 准备数据，注意字段顺序要与schema定义一致（除了auto_id字段）
-        # schema字段顺序：id(auto), name, text, embedding
-        data = [
-            names,                       # name字段  
-            texts,                       # text字段
-            embeddings                   # embedding字段
-        ]
-        
-        self.collection.insert(data)
-        self.collection.flush()
-        print(f"已向集合插入 {len(names)} 条记录")
+        return self.embeddings.embed_documents(texts)
         
     def process_file(self, file_path):
         """处理文件并上传到Milvus"""
@@ -120,26 +84,42 @@ class SimpleDocumentUploader:
             documents = loader.load()
             print(f"成功加载文档：{file_name}")
             
+            # 添加源文件名到元数据
+            for doc in documents:
+                doc.metadata['source'] = file_name
+            
             text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
             docs = text_splitter.split_documents(documents)
-            texts = [doc.page_content.strip() for doc in docs if doc.page_content and doc.page_content.strip()]
-            final_texts = [t[:2000] for t in texts if t]
             
-            # 生成嵌入向量
-            print("正在生成嵌入向量...")
-            embeddings = self.get_embedding(final_texts)
+            # 限制每个文档块的长度
+            for doc in docs:
+                if len(doc.page_content) > 2000:
+                    doc.page_content = doc.page_content[:2000]
             
-            # 准备文件名列表
-            names = [file_name] * len(final_texts)
+            # 使用Milvus.from_documents创建向量存储并添加文档
+            self.vectorstore = Milvus.from_documents(
+                documents=docs,
+                embedding=self.embeddings,
+                builtin_function=BM25BuiltInFunction(),
+                collection_name=self.collection_name,
+                connection_args={"uri": f"http://{self.host}:{self.port}"},
+                vector_field=["dense", "sparse"],
+                drop_old=True  # 删除已存在的同名集合
+            )
             
-            # 插入数据
-            self.insert_data(names, final_texts, embeddings)
-            print(f"文档 '{file_name}' 上传成功！")
+            # 设置BM25内置函数用于混合搜索
+            self.vectorstore.builtin_function = BM25BuiltInFunction()
+            
+            print(f"文档 '{file_name}' 上传成功！共 {len(docs)} 个文档块")
             return True
             
         except Exception as e:
             print(f"处理文件时出错：{e}")
+            import traceback
+            traceback.print_exc()
             return False
+        
+
     
     def drop_collection(self):
         """删除集合"""

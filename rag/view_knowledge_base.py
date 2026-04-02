@@ -136,8 +136,10 @@ class KnowledgeBaseViewer:
                     break
 
             # 确定输出字段：所有非向量字段（确保包含source字段）
+            # 排除稠密向量(FLOAT_VECTOR)和稀疏向量(SPARSE_FLOAT_VECTOR)字段
+            excluded_types = ["FLOAT_VECTOR", "SPARSE_FLOAT_VECTOR"]
             output_fields = [field.name for field in schema.fields 
-                            if field.dtype.name != "FLOAT_VECTOR"]
+                            if field.dtype.name not in excluded_types]
 
             # 查询文档 - 不限制数量以获取所有文档进行正确分组
             res = collection.query(

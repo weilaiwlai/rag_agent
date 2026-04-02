@@ -1,7 +1,3 @@
-"""
-向量检索器模块
-基于向量数据库实现智能问答和内容检索
-"""
 import os
 from openai import OpenAI
 import logging
@@ -65,7 +61,7 @@ class VectorRetriever:
     
     def __init__(self, 
                  db_manager: VectorDatabaseManager,
-                 similarity_threshold: float = 0.5, # 适当调整阈值
+                 similarity_threshold: float = 0.1, # 适当调整阈值
                  max_results: int = 10):
         """
         初始化向量检索器
@@ -95,14 +91,12 @@ class VectorRetriever:
                              include_scores: bool = True) -> List[Tuple[Document, float]]:
         """
         搜索相似内容
-        
         Args:
             query: 查询文本
             collection_name: Milvus 集合名称
             k: 返回结果数量
             filter_expression: Milvus 过滤表达式
             include_scores: 是否包含相似度分数
-            
         Returns:
             检索结果列表 (文档, 分数)
         """
@@ -130,7 +124,7 @@ class VectorRetriever:
                         k: int = 5,
                         use_multi_query: bool = True,
                         use_hyde: bool = False,
-                        use_cross_encoder_rerank: bool = True) -> AnswerResult:
+                        use_cross_encoder_rerank: bool = False) -> AnswerResult:
         """
         回答问题 
         Args:
@@ -152,7 +146,6 @@ class VectorRetriever:
                 hyde_docs = self.generate_hypothetical_document(question, num_docs=rag_conf["hyde_docs_nums"])
                 all_queries.extend(hyde_docs)
                 logger.info(f"HyDE模式开启，生成了 {len(hyde_docs)} 个假设文档作为查询")
-                all_queries.extend(hyde_docs)
             
             search_results_dict = {}     
             for query in all_queries:
@@ -163,7 +156,7 @@ class VectorRetriever:
                 )
                 search_results_dict[query] = query_results
 
-            if use_cross_encoder_rerank:
+            if use_cross_encoder_rerank: #使用交叉编码器重排
                 contents, scores = self.cross_encoder_rerank(question, search_results_dict, top_n=k)
                 source_documents = []
                 context_parts = []
@@ -175,7 +168,7 @@ class VectorRetriever:
                     context_parts.append(f"参考资料{len(context_parts)+1}: {doc.page_content}")
                 context = "\n\n".join(context_parts)
                 normalized_scores = scores
-            else:
+            else: #如果不使用交叉编码器重排，使用RRF
                 rrf_results = self.reciprocal_rank_fusion(search_results_dict, top_n=k)
             
                 context_parts = []
@@ -189,7 +182,9 @@ class VectorRetriever:
                 
                 context = "\n\n".join(context_parts)
 
-                normalized_scores = self._calculate_score(scores)
+                #不适用bm25混合查询的时候，返回的是col距离分数，需要重新计算相似度分数
+                #normalized_scores = self._calculate_col_score(scores)
+                normalized_scores = scores
             
             answer = self._generate_answer_with_llm(question, context)
             
@@ -304,7 +299,7 @@ class VectorRetriever:
             
         return contents, scores
     
-    def _calculate_score(self, scores: List[float]) -> List[float]:
+    def _calculate_col_score(self, scores: List[float]) -> List[float]:
         """计算回答置信度"""
         raw_similarities = [1.0 - d for d in scores]
 

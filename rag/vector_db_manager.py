@@ -1,18 +1,3 @@
-"""
-向量数据库管理模块
-基于LangChain和Milvus实现文档切分、向量化存储和检索功能
-- 1.
-MinIO (对象存储服务) : Milvus 使用 MinIO 来存储数据。它提供了一个网页管理界面。
-
-- 登录页面 : http://localhost:9001
-- 账号 (Access Key) : minioadmin
-- 密码 (Secret Key) : minioadmin
-- 2.
-Milvus (向量数据库) : 在我们当前的配置中，Milvus 本身 没有 提供一个用于登录的网页界面。您可以通过代码（例如使用 pymilvus 库）连接到 Milvus 服务来进行操作。
-
-- 连接地址 : localhost:19530
-"""
-
 import os
 import json
 import logging
@@ -20,8 +5,7 @@ from typing import List, Dict, Any, Optional, Tuple
 from pathlib import Path
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.embeddings import HuggingFaceEmbeddings, DashScopeEmbeddings
-from langchain_milvus import Milvus
+from langchain_milvus import BM25BuiltInFunction, Milvus
 from langchain_core.documents import Document
 from langchain_community.document_loaders import (
     TextLoader, 
@@ -128,8 +112,10 @@ class VectorDatabaseManager:
             try: 
                 self.vectorstore = Milvus(
                     embedding_function=self.embeddings,
+                    builtin_function=BM25BuiltInFunction(),
                     collection_name=collection_name,
-                    connection_args={"uri": f"http://{self.milvus_host}:{self.milvus_port}"}
+                    connection_args={"uri": f"http://{self.milvus_host}:{self.milvus_port}"},
+                    vector_field=["dense", "sparse"],
                 )
                 logger.info(f"成功加载现有Milvus集合: {collection_name}")
             except Exception as e:
@@ -222,8 +208,10 @@ class VectorDatabaseManager:
                 if collection_exists:
                     self.vectorstore = Milvus(
                         embedding_function=self.embeddings,
+                        builtin_function=BM25BuiltInFunction(),
                         collection_name=target_collection,
-                        connection_args={"uri": f"http://{self.milvus_host}:{self.milvus_port}"}
+                        connection_args={"uri": f"http://{self.milvus_host}:{self.milvus_port}"},
+                        vector_field=["dense", "sparse"],
                         # 关键：auto_id=True 通常是默认的，但确保配置一致
                     )
                     self.collection_name = target_collection
@@ -235,8 +223,10 @@ class VectorDatabaseManager:
                     self.vectorstore = Milvus.from_documents(
                         documents=documents,
                         embedding=self.embeddings,
+                        builtin_function=BM25BuiltInFunction(),
                         collection_name=target_collection,
                         connection_args={"uri": f"http://{self.milvus_host}:{self.milvus_port}"},
+                        vector_field=["dense", "sparse"],
                         drop_old=False # 明确不删除旧的（虽然这里是else分支，本身就不存在）
                     )
                     self.collection_name = target_collection
@@ -258,8 +248,10 @@ class VectorDatabaseManager:
                      self.vectorstore = Milvus.from_documents(
                         documents=documents,
                         embedding=self.embeddings,
+                        builtin_function=BM25BuiltInFunction(),
                         collection_name=target_collection,
                         connection_args={"uri": f"http://{self.milvus_host}:{self.milvus_port}"},
+                        vector_field=["dense", "sparse"],
                         drop_old=True
                      )
                      self.collection_name = target_collection
@@ -461,8 +453,7 @@ class VectorDatabaseManager:
         try:
             if filter_dict:
                 logger.warning("Milvus集成当前不支持直接的元数据过滤，该过滤器将被忽略。")
-            
-            results = self.vectorstore.similarity_search_with_score(query=query, k=k)
+            results = self.vectorstore.similarity_search_with_score(query=query, k=k, ranker_type="weighted", ranker_params={"weights": [0.6, 0.4]})
             
             logger.info(f"搜索查询, 返回 {len(results)} 个结果")
             return results
@@ -498,8 +489,10 @@ class VectorDatabaseManager:
                      try:
                         self.vectorstore = Milvus(
                             embedding_function=self.embeddings,
+                            builtin_function=BM25BuiltInFunction(),
                             collection_name=target_collection,
-                            connection_args={"uri": f"http://{self.milvus_host}:{self.milvus_port}"}
+                            connection_args={"uri": f"http://{self.milvus_host}:{self.milvus_port}"},
+                            vector_field=["dense", "sparse"],
                         )
                         info["is_initialized"] = True
                      except:

@@ -1,9 +1,13 @@
-from fastmcp import FastMCP  
+from fastmcp import FastMCP
+import sys
+from pathlib import Path
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))  
 # Initialize the server with a name  
 mcp = FastMCP("my-first-server")  
 from typing import List, Dict, Any, Optional, Tuple
-from vector_db_manager import VectorDatabaseManager
-from vector_retriever import VectorRetriever
+from rag.vector_db_manager import VectorDatabaseManager
+from rag.vector_retriever import VectorRetriever
 
 #初始化
 vector_db=VectorDatabaseManager()

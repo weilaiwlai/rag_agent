@@ -10,9 +10,10 @@ from langchain_core.messages import SystemMessage, HumanMessage
 
 import sys
 
-from vector_db_manager import VectorDatabaseManager
+
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
+from rag.vector_db_manager import VectorDatabaseManager
 from utils.config_handler import rag_conf
 from utils.prompt_loader import load_rag_prompts, load_hyde_prompts, load_multi_query_prompt
 from model.factory import chat_model, get_rerank_model

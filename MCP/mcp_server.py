@@ -3,8 +3,6 @@ import sys
 from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))  
-# Initialize the server with a name  
-mcp = FastMCP("my-first-server")  
 from typing import List, Dict, Any, Optional, Tuple
 from rag.vector_db_manager import VectorDatabaseManager
 from rag.vector_retriever import VectorRetriever
@@ -12,7 +10,10 @@ from rag.vector_retriever import VectorRetriever
 #初始化
 vector_db=VectorDatabaseManager()
 retriever=VectorRetriever(vector_db)
-# Define a tool using the @mcp.tool decorator  
+
+# Initialize the server with a name  
+mcp = FastMCP("RagServer")  
+
 # 获取知识库检索工具
 @mcp.tool
 def rag_summarize(query:str,k: int = 5, filter_dict: Dict = None, collection_name: Optional[str] = ["agent_rag"]):
@@ -21,6 +22,7 @@ def rag_summarize(query:str,k: int = 5, filter_dict: Dict = None, collection_nam
     '''
     results=vector_db.search(query,k=5,filter_dict=filter_dict,collection_name=collection_name)
     return results
+
 #获取基于知识库的LLM回答
 @mcp.tool
 def get_llm_answer(question: str, 

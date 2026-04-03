@@ -37,42 +37,42 @@
 ### 配置步骤
 
 1. **克隆项目**
-   ```bash
+```bash
 git clone <your-repo-url>
 cd rag_agent
-   ```
+```
 
 2. **安装后端依赖**
-   ```bash
-   pip install -r requirements.txt
-   ```
+```bash
+pip install -r requirements.txt
+```
 
 3. **配置 API 密钥**
-   在 `config/rag.yml` 文件中设置您的 DashScope API 密钥：
-   ```yaml
+在 `config/rag.yml` 文件中设置您的 DashScope API 密钥：
+```yaml
 dashscope_api_key: your_dashscope_api_key_here
-   ```
+```
 
 4. **启动后端服务**
-   ```bash
-   python rag/server.py
-   ```
-   服务将运行在 `http://localhost:5000`
+```bash
+python rag/server.py
+```
+服务将运行在 `http://localhost:5000`
 
 5. **启动前端服务**
-   ```bash
-   cd rag_front
-   npm install
-   npm run dev
-   ```
-   前端界面将运行在 `http://localhost:5173`
+```bash
+cd rag_front
+npm install
+npm run dev
+```
+前端界面将运行在 `http://localhost:5173`
 
 ### 启动 FastMCP 服务器（可选）
-   如果您希望将此RAG系统作为服务集成到其他AI助手，可以启动FastMCP服务器：
-   ```bash
-   python mcp/mcp_server.py
-   ```
-   服务器将运行在 `http://127.0.0.1:8001`
+如果您希望将此RAG系统作为服务集成到其他AI助手，可以启动FastMCP服务器：
+```bash
+python mcp/mcp_server.py
+```
+服务器将运行在 `http://127.0.0.1:8001`
 
 ## 🛠️ 主要功能
 

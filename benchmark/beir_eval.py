@@ -17,10 +17,48 @@ sys.path.insert(0, str(project_root))
 from rag.vector_db_manager import VectorDatabaseManager
 from rag.vector_retriever import VectorRetriever
 from utils.config_handler import rag_conf
+import hashlib
 
 # 设置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+import time
+
+global global_query_time
+global_query_time = 0
+global global_rerank_time
+global_rerank_time = 0
+
+# 全局变量用于缓存多查询结果
+MULTI_QUERY_CACHE = {}
+CACHE_FILE_PATH = "multi_query_cache.json"
+ 
+def load_multi_query_cache():
+    """从文件加载多查询缓存"""
+    global MULTI_QUERY_CACHE
+    try:
+        if os.path.exists(CACHE_FILE_PATH):
+            with open(CACHE_FILE_PATH, 'r', encoding='utf-8') as f:
+                MULTI_QUERY_CACHE = json.load(f)
+            logger.info(f"已从 {CACHE_FILE_PATH} 加载 {len(MULTI_QUERY_CACHE)} 个多查询缓存条目")
+        else:
+            logger.info(f"缓存文件 {CACHE_FILE_PATH} 不存在，将创建新的缓存")
+    except Exception as e:
+        logger.error(f"加载多查询缓存失败: {e}")
+        MULTI_QUERY_CACHE = {}
+ 
+def save_multi_query_cache():
+    """保存多查询缓存到文件"""
+    try:
+        with open(CACHE_FILE_PATH, 'w', encoding='utf-8') as f:
+            json.dump(MULTI_QUERY_CACHE, f, ensure_ascii=False, indent=2)
+        logger.info(f"已将 {len(MULTI_QUERY_CACHE)} 个多查询缓存条目保存到 {CACHE_FILE_PATH}")
+    except Exception as e:
+        logger.error(f"保存多查询缓存失败: {e}")
+
+def get_query_hash(query_text: str) -> str:
+    """生成查询文本的哈希值作为唯一标识"""
+    return hashlib.md5(query_text.encode('utf-8')).hexdigest()
 
 class RAGSystemEvaluator:
     """
@@ -64,15 +102,40 @@ class RAGSystemEvaluator:
         
         for qid, query_text in queries.items():
             logger.info(f"正在检索查询 {qid}: {query_text[:50]}...")
-            
             try:
-                
+                start_time = time.time()
+                query_time = 0
                 if self.multi_query:
                     all_queries = [query_text]
-                    generated_queries = self.retriever.generate_multi_queries(query_text, num_queries=rag_conf["multi_query_nums"])
-                    all_queries.extend(generated_queries)
+                    # 检查缓存
+                    query_hash = get_query_hash(query_text)
+                    cache_key = f"multi_query_{query_hash}"
+                    if cache_key in MULTI_QUERY_CACHE:
+                        # 从缓存获取结果
+                        cache_time = time.time()
+                        cached_data = MULTI_QUERY_CACHE[cache_key]
+                        generated_queries = cached_data["queries"]
+                        generation_time = cached_data["time"]
+                        cache_time = time.time()-cache_time
+                        logger.info(f"多查询模式 - 从缓存获取结果 (耗时: {generation_time:.4f}s): {generated_queries}")
+                        query_time = generation_time - cache_time    #读缓存时间远小于生成时间
+                    else:
+                        # 调用LLM生成查询并记录时间
+                        llm_start_time = time.time()
+                        generated_queries = self.retriever.generate_multi_queries(query_text, num_queries=rag_conf["multi_query_nums"])
+                        llm_end_time = time.time()
+                        generation_time = llm_end_time - llm_start_time
+                        
+                        # 缓存结果
+                        MULTI_QUERY_CACHE[cache_key] = {
+                            "queries": generated_queries,
+                            "time": generation_time,
+                            "timestamp": time.time()
+                        }
+                        save_multi_query_cache()  # 立即保存到文件
                     logger.info(f"多查询模式开启，生成了 {len(generated_queries)} 个新查询: {generated_queries}")
-                    search_results_dict = {}     
+                    search_results_dict = {}
+                    all_queries.extend(generated_queries)     
                     for query in all_queries:
                         query_results = self.retriever.search_similar_content(
                             query=query,
@@ -100,11 +163,23 @@ class RAGSystemEvaluator:
                             collection_name=self.collection_name,
                             k=top_k  
                         )
+                end_time = time.time()
+                query_time += end_time - start_time
+                start_time = time.time()
                 if self.multi_query or self.hyde:       # 多查询或HyDE模式下，需要对每个查询的结果进行重排
                     if self.rerank == 'model': #使用交叉编码器重排
-                        search_results = self.retriever.cross_encoder_rerank(query_text, search_results_dict, top_n=top_k)
-                    else: #如果不使用交叉编码器重排，使用RRF
+                        content, scores = self.retriever.cross_encoder_rerank(query_text, search_results_dict, top_n=top_k)
+                        search_results = list(zip(content, scores))
+                    elif self.rerank == 'RRF': #如果不使用交叉编码器重排，使用RRF
                         search_results = self.retriever.reciprocal_rank_fusion(search_results_dict, top_n=top_k)
+                    elif self.rerank == 'rrf+model':
+                        RRF_result=self.retriever.reciprocal_rank_fusion(search_results_dict, top_n=top_k*2)
+                        search_results_dict={}
+                        search_results_dict[0]=RRF_result
+                        content, scores = self.retriever.cross_encoder_rerank(query_text, search_results_dict, top_n=top_k)
+                        search_results = list(zip(content, scores))
+                end_time = time.time()
+                rerank_time = end_time - start_time
                 # 将结果转换为BEIR期望的格式 {doc_id: score}
                 formatted_results = {}
                 for idx, (doc, score) in enumerate(search_results):
@@ -119,16 +194,24 @@ class RAGSystemEvaluator:
                     # while doc_id in formatted_results:
                     #     counter += 1
                     #     doc_id = f"{original_doc_id}_{counter}"
-                    doc_id = doc.metadata.get('id')
+                    if self.rerank == 'model' or self.rerank == 'rrf+model':
+                        doc_id = doc['metadata']['id']
+                    else:
+                        doc_id = doc.metadata.get('id')
                     # BEIR期望的是相关性得分，越高越好
                     # 你的系统返回的score已经是相似度分数，直接使用
                     formatted_results[doc_id] = float(score)
-                
                 results[qid] = formatted_results
-                logger.info(f"查询 {qid} 返回了 {len(formatted_results)} 个结果")
+                global global_query_time
+                global_query_time += query_time
+                global global_rerank_time
+                global_rerank_time += rerank_time
+                logger.info(f"查询 {qid} 返回了 {len(formatted_results)} 个结果，查询耗时 {query_time:.4f} 秒, 重排耗时 {rerank_time:.4f} 秒")
                 
             except Exception as e:
                 logger.error(f"查询 {qid} 搜索失败: {e}")
+                import traceback
+                traceback.print_exc()
                 results[qid] = {}
         
         return results
@@ -185,6 +268,7 @@ def evaluate_rag_on_beir_dataset(
     # 执行检索
     logger.info("开始检索...")
     evaluator.results = mock_retriever.search(corpus, queries, max(top_k_values))
+
     logger.info(f"检索:{evaluator.results}")
     
     # 执行评估
@@ -200,12 +284,16 @@ def evaluate_rag_on_beir_dataset(
         mrr_scores = {}
     
     # 输出结果摘要
+    global global_query_time
+    global global_rerank_time
     print("\n" + "="*60)
     print(f"RAG系统评估结果 - 数据集: {dataset_name}")
     print("="*60)
     print(f"知识库集合: {collection_name or rag_conf['COLLECTION_NAME']}")
     print(f"总查询数: {len(queries)}")
     print(f"总文档数: {len(corpus)}")
+    print(f"平均查询耗时: {global_query_time/len(queries):.4f} 秒")
+    print(f"平均重排耗时: {global_rerank_time/len(queries):.4f} 秒")
     print(f"评估指标: {top_k_values}")
     print("\n性能指标:")
     
@@ -274,7 +362,7 @@ def main():
                        help='BEIR数据集名称 (默认: scifact)')
     parser.add_argument('--collection', type=str, default=None,
                        help='你的RAG系统中的集合名称 (默认: 配置文件中的默认值)')
-    parser.add_argument('--top-k', nargs='+', type=int, default=[3,5,10],
+    parser.add_argument('--top-k', nargs='+', type=int, default=[1,3,5,10],
                        help='评估的k值 (默认: [1,3,5,10])')
     parser.add_argument('--output-dir', type=str, default='evaluation_results',
                        help='结果输出目录 (默认: evaluation_results)')
@@ -284,7 +372,7 @@ def main():
                        help='是否启用多查询(默认: False)')
     parser.add_argument('--hyde', type=bool, default=False,
                        help='是否启用假设性文档(默认: False)')
-    parser.add_argument('--rerank', type=str, choices=['RRF', 'model'], default='RRF',
+    parser.add_argument('--rerank', type=str, choices=['RRF', 'model','rrf+model'], default='RRF',
                        help='重排序方法(默认:RRF)')
 
     
@@ -298,7 +386,7 @@ def main():
     print(f"数据集: {args.dataset}")
     print(f"知识库集合: {args.collection or rag_conf['COLLECTION_NAME']}")
     print(f"评估指标: {args.top_k}")
-    
+    load_multi_query_cache()
     try:
         results = evaluate_rag_on_beir_dataset(
             dataset_name=args.dataset,
